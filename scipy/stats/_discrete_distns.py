@@ -15,10 +15,10 @@ import numpy as np
 
 from ._distn_infrastructure import (rv_discrete, get_distribution_names,
                                     _check_shape, _ShapeInfo)
-import scipy.stats._boost as _boost
 from ._biasedurn import (_PyFishersNCHypergeometric,
                          _PyWalleniusNCHypergeometric,
                          _PyStochasticLib3)
+import scipy.special._ufuncs as scu
 
 
 def _isintegral(x):
@@ -73,30 +73,38 @@ class binom_gen(rv_discrete):
 
     def _pmf(self, x, n, p):
         # binom.pmf(k) = choose(n, k) * p**k * (1-p)**(n-k)
-        return _boost._binom_pdf(x, n, p)
+        return scu._binom_pmf(x, n, p)
 
     def _cdf(self, x, n, p):
         k = floor(x)
-        return _boost._binom_cdf(k, n, p)
+        return scu._binom_cdf(k, n, p)
 
     def _sf(self, x, n, p):
         k = floor(x)
-        return _boost._binom_sf(k, n, p)
+        return scu._binom_sf(k, n, p)
 
     def _isf(self, x, n, p):
-        return _boost._binom_isf(x, n, p)
+        return scu._binom_isf(x, n, p)
 
     def _ppf(self, q, n, p):
-        return _boost._binom_ppf(q, n, p)
+        return scu._binom_ppf(q, n, p)
 
     def _stats(self, n, p, moments='mv'):
-        mu = _boost._binom_mean(n, p)
-        var = _boost._binom_variance(n, p)
+        mu = n * p
+        var = mu - n * np.square(p)
         g1, g2 = None, None
         if 's' in moments:
-            g1 = _boost._binom_skewness(n, p)
+            pq = p - np.square(p)
+            npq_sqrt = np.sqrt(n * pq)
+            t1 = np.reciprocal(npq_sqrt)
+            t2 = (2.0 * p) / npq_sqrt
+            g1 = t1 - t2
         if 'k' in moments:
-            g2 = _boost._binom_kurtosis_excess(n, p)
+            pq = p - np.square(p)
+            npq = n * pq
+            t1 = np.reciprocal(npq)
+            t2 = 6.0/n
+            g2 = t1 - t2
         return mu, var, g1, g2
 
     def _entropy(self, n, p):
@@ -324,7 +332,7 @@ class nbinom_gen(rv_discrete):
 
     def _pmf(self, x, n, p):
         # nbinom.pmf(k) = choose(k+n-1, n-1) * p**n * (1-p)**k
-        return _boost._nbinom_pdf(x, n, p)
+        return scu._nbinom_pmf(x, n, p)
 
     def _logpmf(self, x, n, p):
         coeff = gamln(n+x) - gamln(x+1) - gamln(n)
@@ -332,13 +340,13 @@ class nbinom_gen(rv_discrete):
 
     def _cdf(self, x, n, p):
         k = floor(x)
-        return _boost._nbinom_cdf(k, n, p)
+        return scu._nbinom_cdf(k, n, p)
 
     def _logcdf(self, x, n, p):
         k = floor(x)
+        k, n, p = np.broadcast_arrays(k, n, p)
         cdf = self._cdf(k, n, p)
         cond = cdf > 0.5
-
         def f1(k, n, p):
             return np.log1p(-special.betainc(k + 1, n, 1 - p))
 
@@ -351,26 +359,122 @@ class nbinom_gen(rv_discrete):
 
     def _sf(self, x, n, p):
         k = floor(x)
-        return _boost._nbinom_sf(k, n, p)
+        return scu._nbinom_sf(k, n, p)
 
     def _isf(self, x, n, p):
         with np.errstate(over='ignore'):  # see gh-17432
-            return _boost._nbinom_isf(x, n, p)
+            return scu._nbinom_isf(x, n, p)
 
     def _ppf(self, q, n, p):
         with np.errstate(over='ignore'):  # see gh-17432
-            return _boost._nbinom_ppf(q, n, p)
+            return scu._nbinom_ppf(q, n, p)
 
     def _stats(self, n, p):
         return (
-            _boost._nbinom_mean(n, p),
-            _boost._nbinom_variance(n, p),
-            _boost._nbinom_skewness(n, p),
-            _boost._nbinom_kurtosis_excess(n, p),
+            scu._nbinom_mean(n, p),
+            scu._nbinom_variance(n, p),
+            scu._nbinom_skewness(n, p),
+            scu._nbinom_kurtosis_excess(n, p),
         )
 
 
 nbinom = nbinom_gen(name='nbinom')
+
+
+class betanbinom_gen(rv_discrete):
+    r"""A beta-negative-binomial discrete random variable.
+
+    %(before_notes)s
+
+    Notes
+    -----
+    The beta-negative-binomial distribution is a negative binomial
+    distribution with a probability of success `p` that follows a
+    beta distribution.
+
+    The probability mass function for `betanbinom` is:
+
+    .. math::
+
+       f(k) = \binom{n + k - 1}{k} \frac{B(a + n, b + k)}{B(a, b)}
+
+    for :math:`k \ge 0`, :math:`n \geq 0`, :math:`a > 0`,
+    :math:`b > 0`, where :math:`B(a, b)` is the beta function.
+
+    `betanbinom` takes :math:`n`, :math:`a`, and :math:`b` as shape parameters.
+
+    References
+    ----------
+    .. [1] https://en.wikipedia.org/wiki/Beta_negative_binomial_distribution
+
+    %(after_notes)s
+
+    .. versionadded:: 1.12.0
+
+    See Also
+    --------
+    betabinom : Beta binomial distribution
+
+    %(example)s
+
+    """
+    def _shape_info(self):
+        return [_ShapeInfo("n", True, (0, np.inf), (True, False)),
+                _ShapeInfo("a", False, (0, np.inf), (False, False)),
+                _ShapeInfo("b", False, (0, np.inf), (False, False))]
+
+    def _rvs(self, n, a, b, size=None, random_state=None):
+        p = random_state.beta(a, b, size)
+        return random_state.negative_binomial(n, p, size)
+
+    def _argcheck(self, n, a, b):
+        return (n >= 0) & _isintegral(n) & (a > 0) & (b > 0)
+
+    def _logpmf(self, x, n, a, b):
+        k = floor(x)
+        combiln = -np.log(n + k) - betaln(n, k + 1)
+        return combiln + betaln(a + n, b + k) - betaln(a, b)
+
+    def _pmf(self, x, n, a, b):
+        return exp(self._logpmf(x, n, a, b))
+
+    def _stats(self, n, a, b, moments='mv'):
+        # reference: Wolfram Alpha input
+        # BetaNegativeBinomialDistribution[a, b, n]
+        def mean(n, a, b):
+            return n * b / (a - 1.)
+        mu = _lazywhere(a > 1, (n, a, b), f=mean, fillvalue=np.inf)
+        def var(n, a, b):
+            return (n * b * (n + a - 1.) * (a + b - 1.)
+                    / ((a - 2.) * (a - 1.)**2.))
+        var = _lazywhere(a > 2, (n, a, b), f=var, fillvalue=np.inf)
+        g1, g2 = None, None
+        def skew(n, a, b):
+            return ((2 * n + a - 1.) * (2 * b + a - 1.)
+                    / (a - 3.) / sqrt(n * b * (n + a - 1.) * (b + a - 1.)
+                    / (a - 2.)))
+        if 's' in moments:
+            g1 = _lazywhere(a > 3, (n, a, b), f=skew, fillvalue=np.inf)
+        def kurtosis(n, a, b):
+            term = (a - 2.)
+            term_2 = ((a - 1.)**2. * (a**2. + a * (6 * b - 1.)
+                      + 6. * (b - 1.) * b)
+                      + 3. * n**2. * ((a + 5.) * b**2. + (a + 5.)
+                      * (a - 1.) * b + 2. * (a - 1.)**2)
+                      + 3 * (a - 1.) * n
+                      * ((a + 5.) * b**2. + (a + 5.) * (a - 1.) * b
+                      + 2. * (a - 1.)**2.))
+            denominator = ((a - 4.) * (a - 3.) * b * n
+                           * (a + b - 1.) * (a + n - 1.))
+            # Wolfram Alpha uses Pearson kurtosis, so we substract 3 to get
+            # scipy's Fisher kurtosis
+            return term * term_2 / denominator - 3.
+        if 'k' in moments:
+            g2 = _lazywhere(a > 4, (n, a, b), f=kurtosis, fillvalue=np.inf)
+        return mu, var, g1, g2
+
+
+betanbinom = betanbinom_gen(name='betanbinom')
 
 
 class geom_gen(rv_discrete):
@@ -541,10 +645,10 @@ class hypergeom_gen(rv_discrete):
         return result
 
     def _pmf(self, k, M, n, N):
-        return _boost._hypergeom_pdf(k, n, N, M)
+        return scu._hypergeom_pmf(k, n, N, M)
 
     def _cdf(self, k, M, n, N):
-        return _boost._hypergeom_cdf(k, n, N, M)
+        return scu._hypergeom_cdf(k, n, N, M)
 
     def _stats(self, M, n, N):
         M, n, N = 1. * M, 1. * n, 1. * N
@@ -557,9 +661,9 @@ class hypergeom_gen(rv_discrete):
         g2 += 6. * n * N * (M - N) * m * (5. * M - 6)
         g2 /= n * N * (M - N) * m * (M - 2.) * (M - 3.)
         return (
-            _boost._hypergeom_mean(n, N, M),
-            _boost._hypergeom_variance(n, N, M),
-            _boost._hypergeom_skewness(n, N, M),
+            scu._hypergeom_mean(n, N, M),
+            scu._hypergeom_variance(n, N, M),
+            scu._hypergeom_skewness(n, N, M),
             g2,
         )
 
@@ -569,7 +673,7 @@ class hypergeom_gen(rv_discrete):
         return np.sum(entr(vals), axis=0)
 
     def _sf(self, k, M, n, N):
-        return _boost._hypergeom_sf(k, n, N, M)
+        return scu._hypergeom_sf(k, n, N, M)
 
     def _logsf(self, k, M, n, N):
         res = []
@@ -1068,8 +1172,8 @@ class randint_gen(rv_discrete):
     >>> x = np.arange(low - 5, high + 5)
     >>> ax.plot(x, randint.pmf(x, low, high), 'bo', ms=8, label='randint pmf')
     >>> ax.vlines(x, 0, randint.pmf(x, low, high), colors='b', lw=5, alpha=0.5)
-    
-    Alternatively, the distribution object can be called (as a function) to 
+
+    Alternatively, the distribution object can be called (as a function) to
     fix the shape and location. This returns a "frozen" RV object holding the
     given parameters fixed.
 
@@ -1080,7 +1184,7 @@ class randint_gen(rv_discrete):
     ...           lw=1, label='frozen pmf')
     >>> ax.legend(loc='lower center')
     >>> plt.show()
-    
+
     Check the relationship between the cumulative distribution function
     (``cdf``) and its inverse, the percent point function (``ppf``):
 
@@ -1143,7 +1247,7 @@ class randint_gen(rv_discrete):
             low = np.broadcast_to(low, size)
             high = np.broadcast_to(high, size)
         randint = np.vectorize(partial(rng_integers, random_state),
-                               otypes=[np.int_])
+                               otypes=[np.dtype(int)])
         return randint(low, high)
 
     def _entropy(self, low, high):
@@ -1466,8 +1570,8 @@ class skellam_gen(rv_discrete):
     def _pmf(self, x, mu1, mu2):
         with np.errstate(over='ignore'):  # see gh-17432
             px = np.where(x < 0,
-                          _boost._ncx2_pdf(2*mu2, 2*(1-x), 2*mu1)*2,
-                          _boost._ncx2_pdf(2*mu1, 2*(1+x), 2*mu2)*2)
+                          scu._ncx2_pdf(2*mu2, 2*(1-x), 2*mu1)*2,
+                          scu._ncx2_pdf(2*mu1, 2*(1+x), 2*mu2)*2)
             # ncx2.pdf() returns nan's for extremely low probabilities
         return px
 
@@ -1475,8 +1579,8 @@ class skellam_gen(rv_discrete):
         x = floor(x)
         with np.errstate(over='ignore'):  # see gh-17432
             px = np.where(x < 0,
-                          _boost._ncx2_cdf(2*mu2, -2*x, 2*mu1),
-                          1 - _boost._ncx2_cdf(2*mu1, 2*(x+1), 2*mu2))
+                          scu._ncx2_cdf(2*mu2, -2*x, 2*mu1),
+                          1 - scu._ncx2_cdf(2*mu1, 2*(x+1), 2*mu2))
         return px
 
     def _stats(self, mu1, mu2):

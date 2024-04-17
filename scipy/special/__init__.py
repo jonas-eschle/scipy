@@ -472,9 +472,6 @@ Legendre functions
    lpmv     -- Associated Legendre function of integer order and real degree.
    sph_harm -- Compute spherical harmonics.
 
-The following functions do not accept NumPy arrays (they are not
-universal functions):
-
 .. autosummary::
    :toctree: generated/
 
@@ -646,7 +643,7 @@ Spheroidal wave functions
 
    pro_ang1   -- Prolate spheroidal angular function of the first kind and its derivative.
    pro_rad1   -- Prolate spheroidal radial function of the first kind and its derivative.
-   pro_rad2   -- Prolate spheroidal radial function of the secon kind and its derivative.
+   pro_rad2   -- Prolate spheroidal radial function of the second kind and its derivative.
    obl_ang1   -- Oblate spheroidal angular function of the first kind and its derivative.
    obl_rad1   -- Oblate spheroidal radial function of the first kind and its derivative.
    obl_rad2   -- Oblate spheroidal radial function of the second kind and its derivative.
@@ -768,9 +765,41 @@ Convenience functions
    exprel    -- Relative error exponential, (exp(x)-1)/x, for use when `x` is near zero.
    sinc      -- Return the sinc function.
 
-"""
+"""  # noqa: E501
 
+import os
 import warnings
+
+
+def _load_libsf_error_state():
+    """Load libsf_error_state.dll shared library on Windows
+
+    libsf_error_state manages shared state used by
+    ``scipy.special.seterr`` and ``scipy.special.geterr`` so that these
+    can work consistently between special functions provided by different
+    extension modules. This shared library is installed in scipy/special
+    alongside this __init__.py file. Due to lack of rpath support, Windows
+    cannot find shared libraries installed within wheels. To circumvent this,
+    we pre-load ``lib_sf_error_state.dll`` when on Windows.
+
+    The logic for this function was borrowed from the function ``make_init``
+    in `scipy/tools/openblas_support.py`:
+    https://github.com/scipy/scipy/blob/bb92c8014e21052e7dde67a76b28214dd1dcb94a/tools/openblas_support.py#L239-L274
+    """  # noqa: E501
+    if os.name == "nt":
+        try:
+            from ctypes import WinDLL
+            basedir = os.path.dirname(__file__)
+        except:  # noqa: E722
+            pass
+        else:
+            dll_path = os.path.join(basedir, "libsf_error_state.dll")
+            if os.path.exists(dll_path):
+                WinDLL(dll_path)
+
+
+_load_libsf_error_state()
+
 
 from ._sf_error import SpecialFunctionWarning, SpecialFunctionError
 
@@ -779,8 +808,8 @@ from ._ufuncs import *
 
 # Replace some function definitions from _ufuncs to add Array API support
 from ._support_alternative_backends import (
-    log_ndtr, ndtr, ndtri, erf, erfc, i0, i0e, i1, i1e,  # noqa
-    gammaln, gammainc, gammaincc, logit, expit)  # noqa
+    log_ndtr, ndtr, ndtri, erf, erfc, i0, i0e, i1, i1e,
+    gammaln, gammainc, gammaincc, logit, expit)
 
 from . import _basic
 from ._basic import *
@@ -852,3 +881,13 @@ def btdtri(*args, **kwargs):  # type: ignore [no-redef]
 
 
 btdtri.__doc__ = _ufuncs.btdtri.__doc__  # type: ignore [misc]
+
+
+def _get_include():
+    """This function is for development purposes only.
+
+    This function could disappear or its behavior could change at any time.
+    """
+    import os
+    return os.path.dirname(__file__)
+
